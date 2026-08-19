@@ -66,8 +66,8 @@ st.markdown("---")
 
 # --- SIDEBAR: RISK SETTINGS ---
 st.sidebar.header("Risk Settings ⚙️")
-account_balance = st.sidebar.number_input("Account Balance ($)", min_value=100.0, max_value=1000000.0, value=10000.0, step=500.0)
-base_risk_pct = st.sidebar.slider("Risk Per Trade (%)", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
+account_balance = st.sidebar.number_input("Account Balance ($)", min_value=10.0, max_value=1000000.0, value=1000.0, step=100.0)
+base_risk_pct = st.sidebar.slider("Base Risk Per Trade (%)", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
 stop_loss_pips = st.sidebar.number_input("Assumed Stop Loss (USD/Points)", min_value=1.0, max_value=100.0, value=5.0, step=0.5)
 
 st.sidebar.markdown("---")
@@ -111,7 +111,7 @@ else:
     support_level = float(df['Support'].iloc[-1])
     resistance_level = float(df['Resistance'].iloc[-1])
 
-    # --- SIGNAL LOGIC ---
+    # --- SIGNAL & AUTO RISK LOGIC ---
     buy_score = 0
     sell_score = 0
     reasons = []
@@ -146,27 +146,27 @@ else:
     else:
         reasons.append(("ℹ️", "Price Mid-Range"))
 
+    # Auto Risk Adjustment based on setup strength
     if buy_score >= 2:
         signal_text = "BUY"
         signal_color = "#16a34a"
-        risk_modifier = 1.0
-        # Safe TP (1:1.5 Risk Reward) & Risky TP (1:3 Risk Reward)
+        risk_modifier = 1.5  # Safe & Strong setup -> Increases lot size automatically
         safe_tp = current_price + (stop_loss_pips * 1.5)
         risky_tp = current_price + (stop_loss_pips * 3.0)
     elif sell_score >= 2:
         signal_text = "SELL"
         signal_color = "#dc2626"
-        risk_modifier = 1.0
+        risk_modifier = 1.5  # Safe & Strong setup -> Increases lot size automatically
         safe_tp = current_price - (stop_loss_pips * 1.5)
         risky_tp = current_price - (stop_loss_pips * 3.0)
     else:
         signal_text = "NO BUY / NO SELL"
         signal_color = "#ca8a04"
-        risk_modifier = 0.2
+        risk_modifier = 0.2  # Risky/Choppy -> Automatically reduces risk/lot size
         safe_tp = 0.0
         risky_tp = 0.0
 
-    # --- RISK MANAGEMENT ---
+    # --- DYNAMIC POSITION SIZING ---
     risk_dollar_amount = account_balance * (base_risk_pct / 100.0)
     effective_risk = risk_dollar_amount * risk_modifier
     lot_size_recommended = round(effective_risk / (stop_loss_pips * 100.0), 2)
@@ -194,7 +194,7 @@ else:
     with m3:
         st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-label">Suggested Lot Size</div>
+                <div class="metric-label">Auto-Scaled Lot Size</div>
                 <div class="metric-value" style="color: #0284c7;">{lot_size_recommended} Lots</div>
             </div>
         """, unsafe_allow_html=True)
@@ -228,11 +228,11 @@ else:
         l_col2.caption(f"**Resistance:** ${resistance_level:.2f}")
 
     with col_right:
-        st.markdown("### Risk Overview")
+        st.markdown("### Auto Risk & TP Overview")
         st.markdown(f"""
             <div style="background-color: #ffffff; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 13px;">
-                <p style="margin: 3px 0;"><strong>Capital at Risk:</strong> ${effective_risk:.2f}</p>
-                <p style="margin: 3px 0;"><strong>Stop Loss Distance:</strong> {stop_loss_pips} Points</p>
+                <p style="margin: 3px 0;"><strong>Balance:</strong> ${account_balance:.2f}</p>
+                <p style="margin: 3px 0;"><strong>Effective Risk Amount:</strong> ${effective_risk:.2f}</p>
                 <p style="margin: 3px 0;"><strong>Safe TP (1.5R):</strong> ${safe_tp:.2f}</p>
                 <p style="margin: 3px 0;"><strong>Risky TP (3R):</strong> ${risky_tp:.2f}</p>
             </div>
