@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import altair as alt
 
 # --- PAGE CONFIGURATION & COMPACT SPACING ---
 st.set_page_config(
@@ -146,23 +147,22 @@ else:
     else:
         reasons.append(("ℹ️", "Price Mid-Range"))
 
-    # Auto Risk Adjustment based on setup strength
     if buy_score >= 2:
         signal_text = "BUY"
         signal_color = "#16a34a"
-        risk_modifier = 1.5  # Safe & Strong setup -> Increases lot size automatically
+        risk_modifier = 1.5
         safe_tp = current_price + (stop_loss_pips * 1.5)
         risky_tp = current_price + (stop_loss_pips * 3.0)
     elif sell_score >= 2:
         signal_text = "SELL"
         signal_color = "#dc2626"
-        risk_modifier = 1.5  # Safe & Strong setup -> Increases lot size automatically
+        risk_modifier = 1.5
         safe_tp = current_price - (stop_loss_pips * 1.5)
         risky_tp = current_price - (stop_loss_pips * 3.0)
     else:
         signal_text = "NO BUY / NO SELL"
         signal_color = "#ca8a04"
-        risk_modifier = 0.2  # Risky/Choppy -> Automatically reduces risk/lot size
+        risk_modifier = 0.2
         safe_tp = 0.0
         risky_tp = 0.0
 
@@ -238,7 +238,19 @@ else:
             </div>
         """, unsafe_allow_html=True)
 
-    # --- COMPACT CHART ---
+    # --- FIXED & CLEAN ALTAIR CHART ---
     st.markdown("---")
-    chart_df = df[['Close', 'EMA_50', 'EMA_200']].tail(72)
-    st.line_chart(chart_df, height=250, use_container_width=True)
+    st.markdown("### Price Trend & Moving Averages")
+    
+    chart_df = df[['Close', 'EMA_50', 'EMA_200']].tail(96).reset_index()
+    chart_df = chart_df.melt('Datetime', var_name='Indicator', value_name='Price')
+    
+    chart = alt.Chart(chart_df).mark_line().encode(
+        x=alt.X('Datetime:T', title='Time'),
+        y=alt.Y('Price:Q', title='Price ($)', scale=alt.Scale(zero=False)),
+        color=alt.Color('Indicator:N', scale=alt.Scale(domain=['Close', 'EMA_50', 'EMA_200'], range=['#0284c7', '#e11d48', '#9333ea']))
+    ).properties(
+        height=300
+    ).interactive()
+    
+    st.altair_chart(chart, use_container_width=True)
