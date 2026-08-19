@@ -4,15 +4,15 @@ import requests
 import numpy as np
 import altair as alt
 
-# --- PAGE CONFIGURATION & AUTO REFRESH (Every 10 seconds) ---
+# --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="XAU/USD Live Spot & Risk Hub",
+    page_title="XAU/USD Multi-Timeframe Hub",
     page_icon="🪙",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Auto refresh page every 10 seconds so live price updates automatically
+# Auto refresh every 10 seconds for live updates
 st.markdown("""
     <meta http-equiv="refresh" content="10">
 """, unsafe_allow_html=True)
@@ -68,7 +68,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- COMPACT HEADER ---
-st.markdown("## 🪙 XAU/USD Live Spot & Risk Hub (Auto-Refresh Live)")
+st.markdown("## 🪙 XAU/USD Multi-Timeframe Confluence Hub")
 st.markdown("---")
 
 # --- SIDEBAR: RISK SETTINGS ---
@@ -78,207 +78,207 @@ base_risk_pct = st.sidebar.slider("Base Risk Per Trade (%)", min_value=0.1, max_
 stop_loss_pips = st.sidebar.number_input("Assumed Stop Loss (USD/Points)", min_value=1.0, max_value=100.0, value=5.0, step=0.5)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Auto-refreshing every 10 seconds.")
+st.sidebar.caption("Multi-Timeframe Analysis Active (1m, 5m, 15m)")
 
-# --- ROBUST LIVE DATA FETCHER WITH FALLBACK ---
-@st.cache_data(ttl=2)
-def get_live_market_data():
-    try:
-        url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1m&limit=60"
-        response = requests.get(url, timeout=3)
-        if response.status_code == 200:
-            data = response.json()
-            df = pd.DataFrame(data, columns=[
-                'Open_time', 'Open', 'High', 'Low', 'Close', 'Volume',
-                'Close_time', 'Quote_asset_volume', 'Number_of_trades',
-                'Taker_buy_base_asset_volume', 'Taker_buy_quote_asset_volume', 'Ignore'
-            ])
-            df['Datetime'] = pd.to_datetime(df['Open_time'], unit='ms')
-            df['Close'] = df['Close'].astype(float)
-            df['High'] = df['High'].astype(float)
-            df['Low'] = df['Low'].astype(float)
-            df['Open'] = df['Open'].astype(float)
-            return df[['Datetime', 'Open', 'High', 'Low', 'Close']]
-    except:
-        pass
+# --- MULTI-TIMEFRAME DATA FETCHER ---
+@st.cache_data(ttl=5)
+def fetch_multi_tf_data():
+    def get_klines(interval):
+        try:
+            url = f"https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval={interval}&limit=60"
+            res = requests.get(url, timeout=3)
+            if res.status_code == 200:
+                d = res.json()
+                df = pd.DataFrame(d, columns=['Open_time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Close_time', 'QAV', 'NOT', 'TBBAV', 'TBQAV', 'Ignore'])
+                df['Datetime'] = pd.to_datetime(df['Open_time'], unit='ms')
+                for col in ['Open', 'High', 'Low', 'Close']:
+                    df[col] = df[col].astype(float)
+                return df[['Datetime', 'Open', 'High', 'Low', 'Close']]
+        except:
+            pass
+        return None
+
+    df_1m = get_klines('1m')
+    df_5m = get_klines('5m')
+    df_15m = get_klines('15m')
     
-    # Fallback mechanism
-    np.random.seed(int(pd.Timestamp.now().timestamp()) % 1000)
-    dates = pd.date_range(end=pd.Timestamp.now(), periods=60, freq='1min')
-    base_p = 4341.5 + np.random.normal(0, 0.5, 60).cumsum()
-    df_fall = pd.DataFrame({
-        'Datetime': dates,
-        'Open': base_p - 0.2,
-        'High': base_p + 0.5,
-        'Low': base_p - 0.5,
-        'Close': base_p
-    })
-    return df_fall
+    # Fallback if API fails
+    if df_1m is None or df_5m is None or df_15m is None:
+        dates = pd.date_range(end=pd.Timestamp.now(), periods=60, freq='1min')
+        base_p = 4341.0 + np.random.normal(0, 0.2, 60).cumsum()
+        df_dummy = pd.DataFrame({'Datetime': dates, 'Open': base_p-0.1, 'High': base_p+0.4, 'Low': base_p-0.4, 'Close': base_p})
+        return df_dummy, df_dummy, df_dummy
 
-df = get_live_market_data()
+    return df_1m, df_5m, df_15m
 
-if df is None or df.empty:
-    st.error("Market data unavailable. Please refresh.")
-else:
-    current_price = float(df['Close'].iloc[-1])
+df_1m, df_5m, df_15m = fetch_multi_tf_data()
+current_price = float(df_1m['Close'].iloc[-1])
 
-    # --- TECHNICAL CALCULATIONS ---
+# --- CALCULATE INDICATORS ACROSS TIMEFRAMES ---
+def analyze_tf(df, span):
+    ema = df['Close'].ewm(span=span, adjust=False).mean().iloc[-1]
     delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=10).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=10).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rsi = 100 - (100 / (1 + (gain / loss)))
+    current_rsi = float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50.0
+    support = float(df['Low'].rolling(window=20).min().iloc[-1])
+    resistance = float(df['High'].rolling(window=20).max().iloc[-1])
+    return ema, current_rsi, support, resistance
 
-    df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
-    df['Support'] = df['Low'].rolling(window=15).min()
-    df['Resistance'] = df['High'].rolling(window=15).max()
+ema_1m, rsi_1m, sup_1m, res_1m = analyze_tf(df_1m, 20)
+ema_5m, rsi_5m, sup_5m, res_5m = analyze_tf(df_5m, 30)
+ema_15m, rsi_15m, sup_15m, res_15m = analyze_tf(df_15m, 50)
 
-    current_rsi = float(df['RSI'].iloc[-1])
-    if pd.isna(current_rsi): current_rsi = 50.0
+# --- CONFLUENCE SCORING ENGINE ---
+buy_score = 0
+sell_score = 0
+reasons = []
+
+# 15M Macro Trend Check (High Weight)
+if current_price > ema_15m:
+    buy_score += 35
+    reasons.append(("✅", f"15m Macro Trend is Bullish (Price > EMA)"))
+else:
+    sell_score += 35
+    reasons.append(("🔻", f"15m Macro Trend is Bearish (Price < EMA)"))
+
+# 5M Momentum Check (Medium Weight)
+if current_price > ema_5m:
+    buy_score += 25
+    reasons.append(("✅", f"5m Momentum is Bullish"))
+else:
+    sell_score += 25
+    reasons.append(("🔻", f"5m Momentum is Bearish"))
+
+# 1M Execution & RSI Check
+if rsi_1m < 45:
+    buy_score += 25
+    reasons.append(("✅", f"1m RSI indicates Dip Entry ({rsi_1m:.1f})"))
+elif rsi_1m > 55:
+    sell_score += 25
+    reasons.append(("🔻", f"1m RSI indicates Rally Exit ({rsi_1m:.1f})"))
+else:
+    reasons.append(("ℹ️", f"1m RSI Neutral ({rsi_1m:.1f})"))
+
+# Support / Resistance Proximity
+dist_sup = abs(current_price - sup_5m)
+dist_res = abs(current_price - res_5m)
+if dist_sup < dist_res:
+    buy_score += 15
+    reasons.append(("✅", f"Closer to 5m Support Zone (${sup_5m:.2f})"))
+else:
+    sell_score += 15
+    reasons.append(("🔻", f"Closer to 5m Resistance Zone (${res_5m:.2f})"))
+
+# Final Decision with High Confluence Threshold (>= 75)
+if buy_score >= 75 and buy_score > sell_score:
+    signal_text = "BUY"
+    signal_color = "#16a34a"
+    accuracy_pct = buy_score
+    risk_modifier = 1.5
+    safe_tp = current_price + (stop_loss_pips * 1.5)
+    risky_tp = current_price + (stop_loss_pips * 3.0)
+elif sell_score >= 75 and sell_score > buy_score:
+    signal_text = "SELL"
+    signal_color = "#dc2626"
+    accuracy_pct = sell_score
+    risk_modifier = 1.5
+    safe_tp = current_price - (stop_loss_pips * 1.5)
+    risky_tp = current_price - (stop_loss_pips * 3.0)
+else:
+    signal_text = "NO BUY / NO SELL"
+    signal_color = "#ca8a04"
+    accuracy_pct = max(buy_score, sell_score)
+    risk_modifier = 0.2
+    safe_tp = 0.0
+    risky_tp = 0.0
+
+# --- POSITION SIZING ---
+risk_dollar_amount = account_balance * (base_risk_pct / 100.0)
+effective_risk = risk_dollar_amount * risk_modifier
+lot_size_recommended = round(effective_risk / (stop_loss_pips * 100.0), 2)
+if lot_size_recommended < 0.01: lot_size_recommended = 0.01
+
+# --- UI DISPLAY ---
+m1, m2, m3, m4 = st.columns(4)
+
+with m1:
+    st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">XAU/USD Live Spot Rate</div>
+            <div class="metric-value">${current_price:.2f}</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+with m2:
+    st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">Multi-TF Signal & Accuracy</div>
+            <div class="metric-value" style="color: {signal_color}; font-size: 18px !important;">
+                {signal_text} <span style="font-size: 14px; background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">({accuracy_pct}%)</span>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+with m3:
+    st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">Auto-Scaled Lot Size</div>
+            <div class="metric-value" style="color: #0284c7;">{lot_size_recommended} Lots</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+with m4:
+    st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-label">Take Profit Targets</div>
+            <div style="font-size: 13px; font-weight: 600; color: #334155; margin-top: 2px;">
+                🛡️ Safe: ${safe_tp:.2f}<br>🔥 Risky: ${risky_tp:.2f}
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# --- BREAKDOWN SECTION ---
+col_left, col_right = st.columns([1.1, 0.9])
+
+with col_left:
+    st.markdown("### Multi-Timeframe Technical Breakdown")
+    for icon, text in reasons:
+        st.markdown(f"""
+            <div class="analysis-item">
+                <span>{icon} <strong>{text}</strong></span>
+            </div>
+        """, unsafe_allow_html=True)
     
-    ema_20 = float(df['EMA_20'].iloc[-1])
-    support_level = float(df['Support'].iloc[-1])
-    resistance_level = float(df['Resistance'].iloc[-1])
+    l_col1, l_col2 = st.columns(2)
+    l_col1.caption(f"**5m Support:** ${sup_5m:.2f}")
+    l_col2.caption(f"**5m Resistance:** ${res_5m:.2f}")
 
-    # --- SIGNAL & ACCURACY PERCENTAGE LOGIC ---
-    buy_score = 0
-    sell_score = 0
-    reasons = []
+with col_right:
+    st.markdown("### Risk & Execution Overview")
+    st.markdown(f"""
+        <div style="background-color: #ffffff; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 13px;">
+            <p style="margin: 3px 0;"><strong>Balance:</strong> ${account_balance:.2f}</p>
+            <p style="margin: 3px 0;"><strong>Effective Risk Amount:</strong> ${effective_risk:.2f}</p>
+            <p style="margin: 3px 0;"><strong>Safe TP (1.5R):</strong> ${safe_tp:.2f}</p>
+            <p style="margin: 3px 0;"><strong>Risky TP (3R):</strong> ${risky_tp:.2f}</p>
+        </div>
+    """, unsafe_allow_html=True)
 
-    if current_price > ema_20:
-        buy_score += 40
-        reasons.append(("✅", "Bullish Momentum (Above EMA)"))
-    else:
-        sell_score += 40
-        reasons.append(("🔻", "Bearish Momentum (Below EMA)"))
+# --- CHART ---
+st.markdown("---")
+st.markdown("### 5-Minute Price Action Chart")
 
-    if current_rsi < 45:
-        buy_score += 30
-        reasons.append(("✅", f"RSI Zone Supportive for Buy ({current_rsi:.1f})"))
-    elif current_rsi > 55:
-        sell_score += 30
-        reasons.append(("🔻", f"RSI Zone Supportive for Sell ({current_rsi:.1f})"))
-    else:
-        reasons.append(("ℹ️", f"RSI Neutral ({current_rsi:.1f})"))
+chart_df = df_5m[['Datetime', 'Close']].tail(60).melt('Datetime', var_name='Indicator', value_name='Price')
+chart = alt.Chart(chart_df).mark_line(point=True).encode(
+    x=alt.X('Datetime:T', title='Time (5m Candles)'),
+    y=alt.Y('Price:Q', title='Price ($)', scale=alt.Scale(zero=False)),
+    color=alt.Color('Indicator:N', scale=alt.Scale(domain=['Close'], range=['#0284c7']))
+).properties(
+    height=260
+).interactive()
 
-    dist_to_support = abs(current_price - support_level)
-    dist_to_resistance = abs(current_price - resistance_level)
-
-    if dist_to_support <= dist_to_resistance:
-        buy_score += 30
-        reasons.append(("✅", f"Closer to Support Zone (${support_level:.2f})"))
-    else:
-        sell_score += 30
-        reasons.append(("🔻", f"Closer to Resistance Zone (${resistance_level:.2f})"))
-
-    if buy_score >= 60 and buy_score > sell_score:
-        signal_text = "BUY"
-        signal_color = "#16a34a"
-        accuracy_pct = buy_score
-        risk_modifier = 1.5
-        safe_tp = current_price + (stop_loss_pips * 1.5)
-        risky_tp = current_price + (stop_loss_pips * 3.0)
-    elif sell_score >= 60 and sell_score > buy_score:
-        signal_text = "SELL"
-        signal_color = "#dc2626"
-        accuracy_pct = sell_score
-        risk_modifier = 1.5
-        safe_tp = current_price - (stop_loss_pips * 1.5)
-        risky_tp = current_price - (stop_loss_pips * 3.0)
-    else:
-        signal_text = "NO BUY / NO SELL"
-        signal_color = "#ca8a04"
-        accuracy_pct = max(buy_score, sell_score)
-        risk_modifier = 0.2
-        safe_tp = 0.0
-        risky_tp = 0.0
-
-    # --- DYNAMIC POSITION SIZING ---
-    risk_dollar_amount = account_balance * (base_risk_pct / 100.0)
-    effective_risk = risk_dollar_amount * risk_modifier
-    lot_size_recommended = round(effective_risk / (stop_loss_pips * 100.0), 2)
-    if lot_size_recommended < 0.01: lot_size_recommended = 0.01
-
-    # --- COMPACT UI DISPLAY ---
-    m1, m2, m3, m4 = st.columns(4)
-
-    with m1:
-        st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">XAU/USD Live Spot Rate</div>
-                <div class="metric-value">${current_price:.2f}</div>
-            </div>
-        """, unsafe_allow_html=True)
-
-    with m2:
-        st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">Action Signal & Accuracy</div>
-                <div class="metric-value" style="color: {signal_color}; font-size: 18px !important;">
-                    {signal_text} <span style="font-size: 14px; background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">({accuracy_pct}%)</span>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-
-    with m3:
-        st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">Auto-Scaled Lot Size</div>
-                <div class="metric-value" style="color: #0284c7;">{lot_size_recommended} Lots</div>
-            </div>
-        """, unsafe_allow_html=True)
-
-    with m4:
-        st.markdown(f"""
-            <div class="metric-card">
-                <div class="metric-label">Take Profit Targets</div>
-                <div style="font-size: 13px; font-weight: 600; color: #334155; margin-top: 2px;">
-                    🛡️ Safe: ${safe_tp:.2f}<br>🔥 Risky: ${risky_tp:.2f}
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # --- DETAILS SECTION ---
-    col_left, col_right = st.columns([1.1, 0.9])
-
-    with col_left:
-        st.markdown("### Technical Breakdown")
-        for icon, text in reasons:
-            st.markdown(f"""
-                <div class="analysis-item">
-                    <span>{icon} <strong>{text}</strong></span>
-                </div>
-            """, unsafe_allow_html=True)
-        
-        l_col1, l_col2 = st.columns(2)
-        l_col1.caption(f"**Support:** ${support_level:.2f}")
-        l_col2.caption(f"**Resistance:** ${resistance_level:.2f}")
-
-    with col_right:
-        st.markdown("### Auto Risk & TP Overview")
-        st.markdown(f"""
-            <div style="background-color: #ffffff; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 13px;">
-                <p style="margin: 3px 0;"><strong>Balance:</strong> ${account_balance:.2f}</p>
-                <p style="margin: 3px 0;"><strong>Effective Risk Amount:</strong> ${effective_risk:.2f}</p>
-                <p style="margin: 3px 0;"><strong>Safe TP (1.5R):</strong> ${safe_tp:.2f}</p>
-                <p style="margin: 3px 0;"><strong>Risky TP (3R):</strong> ${risky_tp:.2f}</p>
-            </div>
-        """, unsafe_allow_html=True)
-
-    # --- REAL-TIME LIVE CANDLE CHART ---
-    st.markdown("---")
-    st.markdown("### Live 1-Minute Candle Price Chart")
-
-    chart_df = df[['Datetime', 'Close', 'EMA_20']].melt('Datetime', var_name='Indicator', value_name='Price')
-
-    chart = alt.Chart(chart_df).mark_line(point=True).encode(
-        x=alt.X('Datetime:T', title='Time (Live Candles)'),
-        y=alt.Y('Price:Q', title='Price ($)', scale=alt.Scale(zero=False)),
-        color=alt.Color('Indicator:N', scale=alt.Scale(domain=['Close', 'EMA_20'], range=['#0284c7', '#e11d48']))
-    ).properties(
-        height=260
-    ).interactive()
-
-    st.altair_chart(chart, use_container_width=True)
+st.altair_chart(chart, use_container_width=True)
