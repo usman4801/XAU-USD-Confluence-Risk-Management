@@ -4,13 +4,18 @@ import requests
 import numpy as np
 import altair as alt
 
-# --- PAGE CONFIGURATION & COMPACT SPACING ---
+# --- PAGE CONFIGURATION & AUTO REFRESH (Every 10 seconds) ---
 st.set_page_config(
     page_title="XAU/USD Live Spot & Risk Hub",
     page_icon="🪙",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Auto refresh page every 10 seconds so live price updates automatically
+st.markdown("""
+    <meta http-equiv="refresh" content="10">
+""", unsafe_allow_html=True)
 
 # --- LIGHT THEME & CSS ---
 st.markdown("""
@@ -63,7 +68,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- COMPACT HEADER ---
-st.markdown("## 🪙 XAU/USD Live Spot & Risk Hub")
+st.markdown("## 🪙 XAU/USD Live Spot & Risk Hub (Auto-Refresh Live)")
 st.markdown("---")
 
 # --- SIDEBAR: RISK SETTINGS ---
@@ -73,10 +78,10 @@ base_risk_pct = st.sidebar.slider("Base Risk Per Trade (%)", min_value=0.1, max_
 stop_loss_pips = st.sidebar.number_input("Assumed Stop Loss (USD/Points)", min_value=1.0, max_value=100.0, value=5.0, step=0.5)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Data Source: Live Spot Market Stream")
+st.sidebar.caption("Auto-refreshing every 10 seconds.")
 
 # --- ROBUST LIVE DATA FETCHER WITH FALLBACK ---
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=2)
 def get_live_market_data():
     try:
         url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1m&limit=60"
@@ -97,7 +102,7 @@ def get_live_market_data():
     except:
         pass
     
-    # Fallback mechanism if API fails so app never crashes
+    # Fallback mechanism
     np.random.seed(int(pd.Timestamp.now().timestamp()) % 1000)
     dates = pd.date_range(end=pd.Timestamp.now(), periods=60, freq='1min')
     base_p = 4341.5 + np.random.normal(0, 0.5, 60).cumsum()
@@ -166,7 +171,6 @@ else:
         sell_score += 30
         reasons.append(("🔻", f"Closer to Resistance Zone (${resistance_level:.2f})"))
 
-    # Determine Final Action & Accuracy %
     if buy_score >= 60 and buy_score > sell_score:
         signal_text = "BUY"
         signal_color = "#16a34a"
