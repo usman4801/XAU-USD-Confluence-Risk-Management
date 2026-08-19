@@ -72,13 +72,14 @@ base_risk_pct = st.sidebar.slider("Base Risk Per Trade (%)", min_value=0.1, max_
 stop_loss_pips = st.sidebar.number_input("Assumed Stop Loss (USD/Points)", min_value=1.0, max_value=100.0, value=5.0, step=0.5)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Data Source: Yahoo Finance (GC=F)")
+st.sidebar.caption("Data Source: Yahoo Finance Live 1m Interval")
 
-# --- DATA FETCHER ---
-@st.cache_data(ttl=180)
+# --- DATA FETCHER (Updated to 1-minute interval for fresh candles) ---
+@st.cache_data(ttl=60) # Refresh every 60 seconds
 def load_gold_data():
     try:
-        df = yf.download("GC=F", period="60d", interval="1h", progress=False)
+        # Using 1m interval for closer real-time matching
+        df = yf.download("GC=F", period="5d", interval="1m", progress=False)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         df.dropna(inplace=True)
@@ -86,7 +87,7 @@ def load_gold_data():
     except Exception as e:
         return None
 
-with st.spinner("Scanning market data..."):
+with st.spinner("Fetching live candle data..."):
     df = load_gold_data()
 
 if df is None or df.empty:
@@ -102,8 +103,8 @@ else:
     df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
     
-    df['Support'] = df['Low'].rolling(window=20).min()
-    df['Resistance'] = df['High'].rolling(window=20).max()
+    df['Support'] = df['Low'].rolling(window=50).min()
+    df['Resistance'] = df['High'].rolling(window=50).max()
 
     current_price = float(df['Close'].iloc[-1])
     current_rsi = float(df['RSI'].iloc[-1])
@@ -138,10 +139,10 @@ else:
     dist_to_support = abs(current_price - support_level)
     dist_to_resistance = abs(current_price - resistance_level)
     
-    if dist_to_support < (current_price * 0.003):
+    if dist_to_support < (current_price * 0.002):
         buy_score += 1
         reasons.append(("✅", f"At Support Zone (${support_level:.2f})"))
-    elif dist_to_resistance < (current_price * 0.003):
+    elif dist_to_resistance < (current_price * 0.002):
         sell_score += 1
         reasons.append(("🔻", f"At Resistance Zone (${resistance_level:.2f})"))
     else:
@@ -238,19 +239,19 @@ else:
             </div>
         """, unsafe_allow_html=True)
 
-    # --- FIXED & CLEAN ALTAIR CHART ---
+    # --- ALTAIR CHART (1-minute continuous candles) ---
     st.markdown("---")
-    st.markdown("### Price Trend & Moving Averages")
+    st.markdown("### Live 1-Minute Price Trend")
     
-    chart_df = df[['Close', 'EMA_50', 'EMA_200']].tail(96).reset_index()
+    chart_df = df[['Close', 'EMA_50']].tail(120).reset_index()
     chart_df = chart_df.melt('Datetime', var_name='Indicator', value_name='Price')
     
     chart = alt.Chart(chart_df).mark_line().encode(
-        x=alt.X('Datetime:T', title='Time'),
+        x=alt.X('Datetime:T', title='Time (1m Interval)'),
         y=alt.Y('Price:Q', title='Price ($)', scale=alt.Scale(zero=False)),
-        color=alt.Color('Indicator:N', scale=alt.Scale(domain=['Close', 'EMA_50', 'EMA_200'], range=['#0284c7', '#e11d48', '#9333ea']))
+        color=alt.Color('Indicator:N', scale=alt.Scale(domain=['Close', 'EMA_50'], range=['#0284c7', '#e11d48']))
     ).properties(
-        height=300
+        height=280
     ).interactive()
     
     st.altair_chart(chart, use_container_width=True)
